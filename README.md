@@ -2,7 +2,8 @@
 ![ChatGPT Image Jun 27, 2025, 06_07_14 AM](https://github.com/user-attachments/assets/f9024472-18fb-4c73-b54e-0fab0161c050)
 # MnC-gangzones
 ------------------------------------------------------------------------------
-A simple script with zones for active gangs in a server with no gangs, 
+a simple pvp style script but using peds. Rewards given for each kill player gets,
+with zones for active gangs in a server with no gangs, 
 Enter the zone at your own will peds only attack if you shoot in their area.
 ------------------------------------------------------------------------------
 ![FiveM® by Cfx re - Midnight Club Los Santo's 26_06_2025 16_41_35](https://github.com/user-attachments/assets/89766290-5269-4cd3-b9ec-36e7581ced43)
