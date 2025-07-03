@@ -4,7 +4,7 @@
 ------------------------------------------------------------------------------
 A simple pvp style script but using peds. Rewards given for each kill player gets,
 with zones for active gangs in a server with no gangs, 
-Enter the zone at your own will peds only attack if you shoot in their area.
+Enter the zone at your own will peds only attack if you shoot in their area. (grove street)
 ------------------------------------------------------------------------------
 ![FiveM® by Cfx re - Midnight Club Los Santo's 26_06_2025 16_41_35](https://github.com/user-attachments/assets/89766290-5269-4cd3-b9ec-36e7581ced43)
 ![FiveM® by Cfx re - Midnight Club Los Santo's 26_06_2025 16_41_48](https://github.com/user-attachments/assets/44d0e94e-743c-4ee6-9c94-e0dcbc6f63ac)
