@@ -5,9 +5,10 @@ local Config = {
     PatrolRadius = 80,
     PatrolSpeed = 1.0,
     PatrolWait = 100000,
-    NumberOfGuards = 30,
+    NumberOfGuards = 40,
 }
 
+local zoneUnderAttack = {} -- Track if zone is already aggressive
 local zoneGuards = {}
 local zoneBlips = {}
 local lastKillerPed = nil
@@ -127,6 +128,77 @@ local function PatrolPed(ped, centerPos)
     end)
 end
 
+local function RespawnGuard(zoneIndex)
+    local zone = Zones[zoneIndex]
+    local model = GetPedModelFromGroup(zone.gangPedGroup)
+
+    RequestModel(model)
+    while not HasModelLoaded(model) do Wait(50) end
+
+    local tries = 0
+    local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+    for _, pt in ipairs(zone.points) do
+        minX = math.min(minX, pt.x)
+        minY = math.min(minY, pt.y)
+        maxX = math.max(maxX, pt.x)
+        maxY = math.max(maxY, pt.y)
+    end
+
+    while tries < 1000 do
+        tries = tries + 1
+        local randX = math.random() * (maxX - minX) + minX
+        local randY = math.random() * (maxY - minY) + minY
+
+        if IsPointInPolygon(vector2(randX, randY), zone.points) then
+            local found, z = GetGroundZFor_3dCoord(randX, randY, 1000.0, false)
+            if found and IsSafeCoord(randX, randY, z) then
+                local ped = CreatePed(4, model, randX, randY, z, math.random(0, 360), true, false)
+                SetPedRelationshipGroupHash(ped, zone.gangPedGroup)
+                SetEntityAsMissionEntity(ped, true, true)
+                SetPedArmour(ped, 50)
+                SetPedDropsWeaponsWhenDead(ped, false)
+                GiveWeaponToPed(ped, `WEAPON_PISTOL`, 100, false, true)
+
+                table.insert(zoneGuards[zoneIndex], ped)
+
+                print(string.format("[Respawn] Guard respawned in zone %d", zoneIndex))
+
+                CreateThread(function()
+                    while DoesEntityExist(ped) and not IsEntityDead(ped) do
+                        if HasEntityBeenDamagedByAnyPed(ped) then
+                            ClearEntityLastDamageEntity(ped)
+                            local attacker = PlayerPedId()
+                            for _, other in ipairs(zoneGuards[zoneIndex]) do
+                                if DoesEntityExist(other) and not IsPedDeadOrDying(other) then
+                                    ClearPedTasksImmediately(other)
+                                    SetPedAsEnemy(other, true)
+                                    TaskCombatPed(other, attacker, 0, 16)
+                                    PlayAmbientSpeech1(other, "GENERIC_INSULT_HIGH", "SPEECH_PARAMS_FORCE")
+                                end
+                            end
+                            break
+                        end
+                        Wait(100)
+                    end
+                end)
+
+                if zoneUnderAttack[zoneIndex] then
+                    -- Immediate combat
+                    TaskCombatPed(ped, PlayerPedId(), 0, 16)
+                else
+                    -- Passive patrol
+                    local center = CalculateCentroid(zone.points)
+                    TaskStartScenarioInPlace(ped, "WORLD_HUMAN_STAND_IMPATIENT", 0, true)
+                    PatrolPed(ped, center)
+                end
+
+                break
+            end
+        end
+        Wait(0)
+    end
+end
+
 CreateThread(function()
     while true do
         Wait(1000)
@@ -138,13 +210,21 @@ CreateThread(function()
                     if killer == PlayerPedId() then
                         TriggerServerEvent('mnc:rewardForPedKill')
                     end
+
                     table.remove(guards, i)
                     DeleteEntity(ped)
+
+                    -- Delay and respawn the guard
+                    CreateThread(function()
+                        Wait(5000) -- Respawn delay
+                        RespawnGuard(zoneIndex)
+                    end)
                 end
             end
         end
     end
 end)
+
 
 local function SpawnZoneGuards()
     for zoneIndex, zone in ipairs(Zones) do
@@ -269,7 +349,7 @@ CreateThread(function()
                 for zoneIndex, guards in pairs(zoneGuards) do
                     for _, g in ipairs(guards) do
                         if DoesEntityExist(g) and g == killer then
-                            -- Trigger flee from ALL guards in this zone (excluding dead ones)
+                            -- Trigger flee from ALL guards in this zone
                             CreateThread(function()
                                 for _, ped in ipairs(zoneGuards[zoneIndex]) do
                                     if DoesEntityExist(ped) and not IsPedDeadOrDying(ped) then
@@ -277,13 +357,16 @@ CreateThread(function()
                                         TaskSmartFleeCoord(ped, deathPos.x, deathPos.y, deathPos.z, 150.0, 15000, false)
                                     end
                                 end
-                                Wait(15000) -- After 15s, resume patrols
+                                Wait(15000) -- Let them flee for 15s
                                 for _, ped in ipairs(zoneGuards[zoneIndex]) do
                                     if DoesEntityExist(ped) and not IsPedDeadOrDying(ped) then
                                         ClearPedTasks(ped)
                                         PatrolPed(ped, GetEntityCoords(ped))
                                     end
                                 end
+
+                                -- Reset attack flag for that zone
+                                zoneUnderAttack[zoneIndex] = false
                             end)
                             break
                         end
@@ -291,13 +374,20 @@ CreateThread(function()
                 end
             end
         elseif not isDead then
+            if wasDead then
+                -- Reset attack state for all zones just in case
+                for i = 1, #Zones do
+                    zoneUnderAttack[i] = false
+                end
+            end
             wasDead = false
         end
     end
 end)
 
 
--- Aggression on shooting
+
+-- Aggression on shooting - stay hostile until player dies
 CreateThread(function()
     while true do
         Wait(300)
@@ -305,14 +395,19 @@ CreateThread(function()
         if IsPedShooting(ped) then
             local pos = GetEntityCoords(ped)
             local gang = GetPlayerGang()
+
             for zoneIndex, zone in pairs(Zones) do
                 if IsPointInPolygon(vector2(pos.x, pos.y), zone.points) and gang ~= zone.ownerGang then
-                    for _, guardPed in ipairs(zoneGuards[zoneIndex]) do
-                        if DoesEntityExist(guardPed) and not IsPedDeadOrDying(guardPed) then
-                            ClearPedTasksImmediately(guardPed)
-                            SetPedAsEnemy(guardPed, true)
-                            TaskCombatPed(guardPed, ped, 0, 16)
-                            PlayAmbientSpeech1(guardPed, "GENERIC_INSULT_HIGH", "SPEECH_PARAMS_FORCE")
+                    if not zoneUnderAttack[zoneIndex] then
+                        zoneUnderAttack[zoneIndex] = true
+
+                        for _, guardPed in ipairs(zoneGuards[zoneIndex]) do
+                            if DoesEntityExist(guardPed) and not IsPedDeadOrDying(guardPed) then
+                                ClearPedTasksImmediately(guardPed)
+                                SetPedAsEnemy(guardPed, true)
+                                TaskCombatPed(guardPed, ped, 0, 16)
+                                PlayAmbientSpeech1(guardPed, "GENERIC_INSULT_HIGH", "SPEECH_PARAMS_FORCE")
+                            end
                         end
                     end
                     break
@@ -321,6 +416,7 @@ CreateThread(function()
         end
     end
 end)
+
 
 -- Zone Entry Notifications
 CreateThread(function()
@@ -362,6 +458,7 @@ end)
 
 -- Startup
 CreateThread(function()
-    SpawnZoneGuards()
     CreateZoneBlips()
+	Wait(16000)
+	SpawnZoneGuards()
 end)
